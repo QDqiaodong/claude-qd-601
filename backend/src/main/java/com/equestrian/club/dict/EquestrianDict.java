@@ -1,0 +1,257 @@
+package com.equestrian.club.dict;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 马术俱乐部业务字典与规则参数表。
+ * 状态取值、状态机许可边、时段表、会员折扣等规则集中在此，便于按题面调整或扩展。
+ */
+public final class EquestrianDict {
+
+    private EquestrianDict() {
+    }
+
+    // ---------------- 马匹在役状态机 ----------------
+    public static final String HORSE_ACTIVE = "ACTIVE";
+    public static final String HORSE_RESTING = "RESTING";
+    public static final String HORSE_RETIRED = "RETIRED";
+
+    private static final Map<String, String> HORSE_STATUS = Map.of(
+            HORSE_ACTIVE, "在役",
+            HORSE_RESTING, "休养",
+            HORSE_RETIRED, "退役");
+
+    /** 状态机许可边：退役是终态，不可回退 */
+    private static final Map<String, List<String>> HORSE_STATUS_EDGE = Map.of(
+            HORSE_ACTIVE, List.of(HORSE_RESTING, HORSE_RETIRED),
+            HORSE_RESTING, List.of(HORSE_ACTIVE, HORSE_RETIRED),
+            HORSE_RETIRED, List.of());
+
+    // ---------------- 马匹骑乘等级 ----------------
+    private static final Map<String, String> RIDE_LEVEL = Map.of(
+            "BEGINNER_SAFE", "初级安全马",
+            "INTERMEDIATE", "中级马",
+            "ADVANCED", "高级马");
+
+    // ---------------- 栏位状态 ----------------
+    public static final String STALL_IDLE = "IDLE";
+    public static final String STALL_OCCUPIED = "OCCUPIED";
+    public static final String STALL_MAINTENANCE = "MAINTENANCE";
+
+    private static final Map<String, String> STALL_STATUS = Map.of(
+            STALL_IDLE, "空闲",
+            STALL_OCCUPIED, "占用",
+            STALL_MAINTENANCE, "维护中");
+
+    // ---------------- 教练 ----------------
+    private static final Map<String, String> COACH_LEVEL = Map.of(
+            "JUNIOR", "初级教练",
+            "SENIOR", "高级教练",
+            "CHIEF", "总教练");
+
+    public static final String COACH_ON_DUTY = "ON_DUTY";
+
+    private static final Map<String, String> COACH_STATUS = Map.of(
+            COACH_ON_DUTY, "在岗",
+            "LEAVE", "休假");
+
+    // ---------------- 课程 ----------------
+    public static final String CATEGORY_BASIC = "BASIC";
+    public static final String CATEGORY_ADVANCED = "ADVANCED";
+    public static final String CATEGORY_PRIVATE = "PRIVATE";
+
+    private static final Map<String, String> LESSON_CATEGORY = Map.of(
+            CATEGORY_BASIC, "初级课",
+            CATEGORY_ADVANCED, "进阶课",
+            CATEGORY_PRIVATE, "私教课");
+
+    public static final String LESSON_ON = "ON";
+
+    private static final Map<String, String> LESSON_STATUS = Map.of(
+            LESSON_ON, "上架",
+            "OFF", "下架");
+
+    // ---------------- 排期状态 ----------------
+    public static final String SESSION_SCHEDULED = "SCHEDULED";
+    public static final String SESSION_FULL = "FULL";
+    public static final String SESSION_CANCELED = "CANCELED";
+
+    private static final Map<String, String> SESSION_STATUS = Map.of(
+            SESSION_SCHEDULED, "已排期",
+            SESSION_FULL, "已满员",
+            SESSION_CANCELED, "已取消");
+
+    // ---------------- 会员 ----------------
+    private static final Map<String, String> MEMBER_LEVEL = Map.of(
+            "NORMAL", "普通会员",
+            "SILVER", "银卡会员",
+            "GOLD", "金卡会员",
+            "DIAMOND", "钻石卡会员");
+
+    private static final Map<String, BigDecimal> MEMBER_DISCOUNT = Map.of(
+            "NORMAL", BigDecimal.valueOf(1.00),
+            "SILVER", BigDecimal.valueOf(0.95),
+            "GOLD", BigDecimal.valueOf(0.90),
+            "DIAMOND", BigDecimal.valueOf(0.80));
+
+    public static final String MEMBER_NORMAL = "NORMAL";
+
+    private static final Map<String, String> MEMBER_STATUS = Map.of(
+            MEMBER_NORMAL, "正常",
+            "FROZEN", "冻结");
+
+    // ---------------- 骑乘记录状态 ----------------
+    public static final String RECORD_BOOKED = "BOOKED";
+    public static final String RECORD_COMPLETED = "COMPLETED";
+    public static final String RECORD_CANCELED = "CANCELED";
+
+    private static final Map<String, String> RECORD_STATUS = Map.of(
+            RECORD_BOOKED, "已预约",
+            RECORD_COMPLETED, "已完成",
+            RECORD_CANCELED, "已取消");
+
+    // ---------------- 训练日历时段 ----------------
+    /** 训练日历固定时段起点（整点，每次一小时） */
+    public static final List<String> TIME_SLOTS = List.of(
+            "09:00", "10:00", "11:00", "14:00", "15:00", "16:00");
+
+    /** 日历默认展示天数 */
+    public static final int CALENDAR_DAYS = 7;
+
+    /** 日历最多展示天数 */
+    public static final int CALENDAR_MAX_DAYS = 14;
+
+    // ---------------- 取值方法 ----------------
+
+    public static boolean isValidHorseStatus(String status) {
+        return status != null && HORSE_STATUS.containsKey(status);
+    }
+
+    public static String horseStatusName(String status) {
+        return status == null ? "" : HORSE_STATUS.getOrDefault(status, status);
+    }
+
+    public static List<String> horseStatusTargets(String status) {
+        return HORSE_STATUS_EDGE.getOrDefault(status, List.of());
+    }
+
+    public static boolean canTransferHorseStatus(String from, String to) {
+        return horseStatusTargets(from).contains(to);
+    }
+
+    public static boolean isValidRideLevel(String level) {
+        return level != null && RIDE_LEVEL.containsKey(level);
+    }
+
+    public static String rideLevelName(String level) {
+        return level == null ? "" : RIDE_LEVEL.getOrDefault(level, level);
+    }
+
+    public static boolean isValidStallStatus(String status) {
+        return status != null && STALL_STATUS.containsKey(status);
+    }
+
+    public static String stallStatusName(String status) {
+        return status == null ? "" : STALL_STATUS.getOrDefault(status, status);
+    }
+
+    public static boolean isValidCoachStatus(String status) {
+        return status != null && COACH_STATUS.containsKey(status);
+    }
+
+    public static String coachStatusName(String status) {
+        return status == null ? "" : COACH_STATUS.getOrDefault(status, status);
+    }
+
+    public static String coachLevelName(String level) {
+        return level == null ? "" : COACH_LEVEL.getOrDefault(level, level);
+    }
+
+    public static boolean isValidCategory(String category) {
+        return category != null && LESSON_CATEGORY.containsKey(category);
+    }
+
+    public static String categoryName(String category) {
+        return category == null ? "" : LESSON_CATEGORY.getOrDefault(category, category);
+    }
+
+    public static boolean isAdvancedCategory(String category) {
+        return CATEGORY_ADVANCED.equals(category) || CATEGORY_PRIVATE.equals(category);
+    }
+
+    public static boolean isValidLessonStatus(String status) {
+        return status != null && LESSON_STATUS.containsKey(status);
+    }
+
+    public static String lessonStatusName(String status) {
+        return status == null ? "" : LESSON_STATUS.getOrDefault(status, status);
+    }
+
+    public static boolean isValidSessionStatus(String status) {
+        return status != null && SESSION_STATUS.containsKey(status);
+    }
+
+    public static String sessionStatusName(String status) {
+        return status == null ? "" : SESSION_STATUS.getOrDefault(status, status);
+    }
+
+    public static boolean isValidMemberLevel(String level) {
+        return level != null && MEMBER_LEVEL.containsKey(level);
+    }
+
+    public static String memberLevelName(String level) {
+        return level == null ? "" : MEMBER_LEVEL.getOrDefault(level, level);
+    }
+
+    public static BigDecimal memberDiscount(String level) {
+        return MEMBER_DISCOUNT.getOrDefault(level, BigDecimal.valueOf(1.00));
+    }
+
+    public static boolean isValidMemberStatus(String status) {
+        return status != null && MEMBER_STATUS.containsKey(status);
+    }
+
+    public static String memberStatusName(String status) {
+        return status == null ? "" : MEMBER_STATUS.getOrDefault(status, status);
+    }
+
+    public static boolean isValidRecordStatus(String status) {
+        return status != null && RECORD_STATUS.containsKey(status);
+    }
+
+    public static String recordStatusName(String status) {
+        return status == null ? "" : RECORD_STATUS.getOrDefault(status, status);
+    }
+
+    public static boolean isValidTimeSlot(String startTime) {
+        return startTime != null && TIME_SLOTS.contains(startTime);
+    }
+
+    /**
+     * 依据整点起始时间推出一小时后的结束时间，如 09:00 -> 10:00
+     */
+    public static String endOfSlot(String startTime) {
+        if (startTime == null || startTime.length() != 5) {
+            return null;
+        }
+        int hour;
+        try {
+            hour = Integer.parseInt(startTime.substring(0, 2));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return String.format("%02d:%s", (hour + 1) % 24, startTime.substring(3));
+    }
+
+    /**
+     * 判断两个 [start, end) 时段是否重叠（同一天的 HH:mm 字符串直接比较即可）
+     */
+    public static boolean overlap(String startA, String endA, String startB, String endB) {
+        if (startA == null || endA == null || startB == null || endB == null) {
+            return false;
+        }
+        return startA.compareTo(endB) < 0 && endA.compareTo(startB) > 0;
+    }
+}
