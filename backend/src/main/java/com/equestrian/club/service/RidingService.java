@@ -154,6 +154,12 @@ public class RidingService {
         Long horseId = request.getHorseId() != null ? request.getHorseId() : session.getHorseId();
         if (horseId != null) {
             Horse horse = horseService.require(horseId);
+            // 排期已被健康事件标记为受影响：不删除排期，但明确拒绝新预约并指向健康事件
+            if (Boolean.TRUE.equals(session.getHealthAffected())
+                    && EquestrianDict.HORSE_RESTING.equals(horse.getStatus())) {
+                throw new BizException("该排期已被马匹「" + horse.getName()
+                        + "」的健康事件标记为受影响（排期保留但不可约），请待复训放行后再安排");
+            }
             horseService.requireRideable(horse, "安排骑乘课程");
         }
 

@@ -5,6 +5,7 @@ import StallBoard from '../views/StallBoard.vue'
 import LessonSchedule from '../views/LessonSchedule.vue'
 import CoachBoard from '../views/CoachBoard.vue'
 import MemberDesk from '../views/MemberDesk.vue'
+import HealthDesk from '../views/HealthDesk.vue'
 
 /**
  * 轻量前端路由。
@@ -20,6 +21,7 @@ export const menuGroups = [
     label: '马匹与马房',
     items: [
       { path: '/horses', label: '马匹卡片墙', title: '马匹卡片墙 · 训练日历', hint: '点马匹卡片，右侧出这匹马的训练日历；点日历格子直接排课或预约' },
+      { path: '/health', label: '健康事件处置台', title: '马匹健康事件处置台', hint: '登记伤病、观察复查与复训放行全闭环；高风险事件自动休养并标记未来排期' },
       { path: '/stalls', label: '栏位看板', title: '马房栏位看板', hint: '按马房分区看栏位占用，入栏 / 出栏 / 转维护都在卡片上完成' }
     ]
   },
@@ -52,8 +54,15 @@ export const route = reactive({
 
 export const currentView = shallowRef(markRaw(HorseWall))
 
+/**
+ * 跨页面预置选择：马匹卡片墙点「健康处置」后跳到处置台并自动选中这匹马。
+ * { horseId } 只消费一次，处置台读取后置空。
+ */
+export const pendingHealthSelection = reactive({ horseId: null })
+
 const viewByPath = {
   '/horses': markRaw(HorseWall),
+  '/health': markRaw(HealthDesk),
   '/stalls': markRaw(StallBoard),
   '/lessons': markRaw(LessonSchedule),
   '/coaches': markRaw(CoachBoard),

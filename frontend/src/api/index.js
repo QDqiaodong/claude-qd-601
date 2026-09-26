@@ -28,11 +28,15 @@ async function call(promise) {
     const res = await promise
     const body = res.data
     if (body && body.ok === false) {
-      throw new Error(body.message || '操作失败')
+      const error = new Error(body.message || '操作失败')
+      error.status = 200
+      throw error
     }
     return body ? body.data : null
   } catch (error) {
-    throw new Error(messageOf(error))
+    const wrapped = new Error(messageOf(error))
+    wrapped.status = error && error.response ? error.response.status : 0
+    throw wrapped
   }
 }
 
@@ -68,7 +72,16 @@ export const api = {
   sessionRecords: (id) => call(http.get(`/riding-records/by-session/${id}`)),
   book: (body) => call(http.post('/riding-records', body)),
   cancelRecord: (id) => call(http.post(`/riding-records/${id}/cancel`)),
-  completeRecord: (id) => call(http.post(`/riding-records/${id}/complete`))
+  completeRecord: (id) => call(http.post(`/riding-records/${id}/complete`)),
+
+  // 模块五：马匹健康事件处置台
+  healthEvents: (params) => call(http.get('/health/events', { params })),
+  healthEvent: (id) => call(http.get(`/health/events/${id}`)),
+  horseHealthOverview: (horseId, role) =>
+    call(http.get(`/health/horses/${horseId}/overview`, { params: { role } })),
+  registerHealthEvent: (body) => call(http.post('/health/events', body)),
+  transitionHealthEvent: (id, body) => call(http.post(`/health/events/${id}/transitions`, body)),
+  clearHealth: (body) => call(http.post('/health/clearance', body))
 }
 
 export default api

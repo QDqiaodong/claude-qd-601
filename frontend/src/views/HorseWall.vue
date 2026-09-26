@@ -48,14 +48,24 @@
             <el-tag size="small" type="info" effect="plain">
               疫苗 {{ horse.vaccineCount === null ? '—' : horse.vaccineCount }} 次
             </el-tag>
+            <el-tag v-if="horse.openHealthEventCount > 0" size="small" type="danger" effect="dark">
+              未闭环 {{ horse.openHealthEventCount }}
+            </el-tag>
+            <el-tag v-if="horse.overdueHealthEventCount > 0" size="small" type="warning" effect="dark">
+              逾期 {{ horse.overdueHealthEventCount }}
+            </el-tag>
           </div>
           <div class="card__health">
             <span>上次体检 {{ horse.lastCheckDate || '—' }}</span>
             <span>体重 {{ horse.weightKg === null ? '—' : horse.weightKg }} kg</span>
           </div>
+          <div v-if="horse.latestPassConclusion" class="card__pass" :title="horse.latestPassConclusion">
+            最近复查：{{ horse.latestPassConclusion }}
+          </div>
           <div class="card__ops" @click.stop>
             <el-button size="small" text type="primary" @click="openHorseDialog(horse)">改档案</el-button>
             <el-button size="small" text type="primary" @click="openStatusDialog(horse)">流转状态</el-button>
+            <el-button size="small" text type="danger" @click="goHealth(horse)">健康处置</el-button>
           </div>
         </div>
       </div>
@@ -100,6 +110,7 @@
                 {{ cellOf(date, slot).bookedCount }}/{{ cellOf(date, slot).capacity }} 人
                 <span class="cal__names">{{ memberNames(cellOf(date, slot)) }}</span>
               </div>
+              <div v-if="cellOf(date, slot).healthAffected" class="cal__affected">受健康事件影响</div>
             </template>
             <div v-else class="cal__free">+ 排课</div>
           </div>
@@ -286,6 +297,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { navigate, pendingHealthSelection } from '../router'
 
 const horses = ref([])
 const lessons = ref([])
@@ -359,6 +371,11 @@ function weekday(date) {
   return names[new Date(date + 'T00:00:00').getDay()]
 }
 
+function goHealth(horse) {
+  pendingHealthSelection.horseId = horse.id
+  navigate('/health')
+}
+
 function cellOf(date, slot) {
   if (!calendar.value) {
     return null
@@ -380,6 +397,9 @@ function cellClass(date, slot) {
   }
   if (cell.status === 'CANCELED') {
     return 'cal__cell--canceled'
+  }
+  if (cell.healthAffected) {
+    return 'cal__cell--affected'
   }
   if (cell.bookedCount >= cell.capacity) {
     return 'cal__cell--full'
@@ -657,6 +677,18 @@ watch(
   color: #9a8b85;
 }
 
+.card__pass {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #7a5b50;
+  background: #f6eeea;
+  border-radius: 6px;
+  padding: 4px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .card__ops {
   display: flex;
   justify-content: flex-end;
@@ -738,6 +770,18 @@ watch(
   border-style: solid;
   border-color: #573d34;
   color: #fff;
+}
+
+.cal__cell--affected {
+  background: #f7e4e2;
+  border: 1px solid #d98f89;
+}
+
+.cal__affected {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #c45656;
 }
 
 .cal__cell--canceled {

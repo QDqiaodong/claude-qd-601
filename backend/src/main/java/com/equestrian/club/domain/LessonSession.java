@@ -55,6 +55,10 @@ public class LessonSession {
     @Column(name = "status", nullable = false, length = 16)
     private String status;
 
+    /** 是否受马匹健康事件影响：高风险事件登记时未来未取消的用马排期置为 true，绝不删除排期 */
+    @Column(name = "health_affected", nullable = false)
+    private Boolean healthAffected = false;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -151,6 +155,14 @@ public class LessonSession {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public Boolean getHealthAffected() {
+        return healthAffected;
+    }
+
+    public void setHealthAffected(Boolean healthAffected) {
+        this.healthAffected = healthAffected;
     }
 
     public LocalDateTime getCreatedAt() {

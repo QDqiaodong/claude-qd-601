@@ -2,7 +2,11 @@ package com.equestrian.club.dto.view;
 
 import java.time.LocalDate;
 
-/** 课程排期视图：展开课程 / 教练 / 马匹的名称，并给出剩余名额 */
+/**
+ * 课程排期视图：展开课程 / 教练 / 马匹的名称，并给出剩余名额。
+ *
+ * @param healthAffected 该场是否被某匹马的未关闭高风险事件标记为受影响（只标记，不删除排期）
+ */
 public record SessionView(
         Long id,
         Long lessonId,
@@ -22,5 +26,6 @@ public record SessionView(
         Integer bookedCount,
         Integer remain,
         String status,
-        String statusName) {
+        String statusName,
+        Boolean healthAffected) {
 }

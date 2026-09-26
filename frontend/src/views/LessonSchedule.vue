@@ -71,12 +71,23 @@
                 {{ session.lessonName }}
                 <el-tag size="small" effect="plain">{{ session.categoryName }}</el-tag>
                 <el-tag size="small" :type="tagOf(session.status)">{{ session.statusName }}</el-tag>
+                <el-tag v-if="session.healthAffected" type="danger" effect="dark" size="small">
+                  受健康事件影响
+                </el-tag>
               </div>
               <div class="session__meta">
                 教练 {{ session.coachName }}
                 <template v-if="session.horseName"> · 用马 {{ session.horseName }}（{{ session.horseNo }}）</template>
                 <template v-else> · 未指定用马</template>
               </div>
+              <el-alert
+                v-if="session.healthAffected && session.status !== 'CANCELED'"
+                type="error"
+                :closable="false"
+                show-icon
+                style="margin-top: 6px"
+                title="该排期被马匹健康事件标记为受影响：排期保留不删除，但该马休养期间不能再被预约，可在健康处置台追溯。"
+              />
               <el-progress
                 :percentage="percent(session)"
                 :stroke-width="8"
@@ -131,8 +142,10 @@
               :key="horse.id"
               :label="horse.horseNo + ' ' + horse.name + '（' + horse.statusName + '）'"
               :value="horse.id"
+              :disabled="horse.status !== 'ACTIVE'"
             />
           </el-select>
+          <p class="eq-muted" style="margin: 4px 0 0">休养 / 退役的马匹不可选；高风险健康事件登记后马匹会自动进入休养。</p>
         </el-form-item>
         <el-form-item label="日期">
           <el-date-picker v-model="form.sessionDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" />

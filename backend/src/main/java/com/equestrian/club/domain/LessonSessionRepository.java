@@ -16,6 +16,16 @@ public interface LessonSessionRepository extends JpaRepository<LessonSession, Lo
     List<LessonSession> findByHorseIdAndSessionDateBetweenOrderBySessionDateAscStartTimeAsc(
             Long horseId, LocalDate from, LocalDate to);
 
+    /**
+     * 登记高风险事件时圈定受影响排期：该马、日期不早于今天、未取消的全部场次。
+     * 只标记不删除（取消状态不动，历史排期不动）。
+     */
+    List<LessonSession> findByHorseIdAndSessionDateGreaterThanEqualAndStatusNotOrderBySessionDateAscStartTimeAsc(
+            Long horseId, LocalDate from, String excludedStatus);
+
+    /** 按一批排期主键取场次（放行复位受影响标记时用） */
+    List<LessonSession> findByHorseIdAndIdIn(Long horseId, List<Long> ids);
+
     /** 训练日历：某段日期内的全部排期 */
     List<LessonSession> findBySessionDateBetweenOrderBySessionDateAscStartTimeAsc(
             LocalDate from, LocalDate to);

@@ -112,6 +112,78 @@ public final class EquestrianDict {
             RECORD_COMPLETED, "已完成",
             RECORD_CANCELED, "已取消");
 
+    // ---------------- 健康事件严重程度 ----------------
+    public static final String SEVERITY_LOW = "LOW";
+    public static final String SEVERITY_MEDIUM = "MEDIUM";
+    public static final String SEVERITY_HIGH = "HIGH";
+
+    private static final Map<String, String> HEALTH_SEVERITY = Map.of(
+            SEVERITY_LOW, "低风险",
+            SEVERITY_MEDIUM, "中风险",
+            SEVERITY_HIGH, "高风险");
+
+    // ---------------- 健康事件状态机 ----------------
+    public static final String EVENT_PENDING = "PENDING";
+    public static final String EVENT_OBSERVING = "OBSERVING";
+    public static final String EVENT_REVIEW_PENDING = "REVIEW_PENDING";
+    public static final String EVENT_CLOSED = "CLOSED";
+
+    /** 未关闭（仍在事件链上、放行时必须全部合格）的状态集合 */
+    public static final List<String> EVENT_OPEN_STATUSES =
+            List.of(EVENT_PENDING, EVENT_OBSERVING, EVENT_REVIEW_PENDING);
+
+    private static final Map<String, String> HEALTH_EVENT_STATUS = Map.of(
+            EVENT_PENDING, "待处理",
+            EVENT_OBSERVING, "观察中",
+            EVENT_REVIEW_PENDING, "待复查",
+            EVENT_CLOSED, "已关闭");
+
+    // ---------------- 健康事件流转动作 ----------------
+    /** 登记 */
+    public static final String ACTION_REGISTER = "REGISTER";
+    /** 补充处置（状态不变，只追加历史） */
+    public static final String ACTION_PROCESS = "PROCESS";
+    /** 开始观察：待处理 -> 观察中 */
+    public static final String ACTION_START_OBSERVE = "START_OBSERVE";
+    /** 申请复查：观察中 -> 待复查 */
+    public static final String ACTION_REQUEST_REVIEW = "REQUEST_REVIEW";
+    /** 复查后继续观察：待复查 -> 观察中（可同时调整下次复查日） */
+    public static final String ACTION_REVIEW_CONTINUE = "REVIEW_CONTINUE";
+    /** 复查合格：待复查维持待复查，写入合格结论，等待负责人放行 */
+    public static final String ACTION_REVIEW_PASS = "REVIEW_PASS";
+    /** 关闭：复训放行通过后由系统逐事件写入 */
+    public static final String ACTION_CLOSE = "CLOSE";
+
+    private static final Map<String, String> HEALTH_ACTION = Map.of(
+            ACTION_REGISTER, "登记事件",
+            ACTION_PROCESS, "补充处置",
+            ACTION_START_OBSERVE, "开始观察",
+            ACTION_REQUEST_REVIEW, "申请复查",
+            ACTION_REVIEW_CONTINUE, "复查后继续观察",
+            ACTION_REVIEW_PASS, "复查合格",
+            ACTION_CLOSE, "复训放行关闭");
+
+    /** 各动作允许的来源状态（登记不校验来源） */
+    private static final Map<String, List<String>> HEALTH_ACTION_FROM = Map.of(
+            ACTION_PROCESS, List.of(EVENT_PENDING, EVENT_OBSERVING, EVENT_REVIEW_PENDING),
+            ACTION_START_OBSERVE, List.of(EVENT_PENDING),
+            ACTION_REQUEST_REVIEW, List.of(EVENT_OBSERVING),
+            ACTION_REVIEW_CONTINUE, List.of(EVENT_REVIEW_PENDING),
+            ACTION_REVIEW_PASS, List.of(EVENT_REVIEW_PENDING));
+
+    /** 合格复查结论的有效天数：放行时结论超过该天数即视为复查过期，必须重新复查 */
+    public static final int PASS_VALID_DAYS = 3;
+
+    // ---------------- 健康处置操作人角色 ----------------
+    /** 普通工作人员：可登记事件、补充处置、推进复查 */
+    public static final String ROLE_STAFF = "STAFF";
+    /** 负责人：在普通工作人员权限之外，唯一能确认复训放行的角色 */
+    public static final String ROLE_MANAGER = "MANAGER";
+
+    private static final Map<String, String> OPERATOR_ROLE = Map.of(
+            ROLE_STAFF, "普通工作人员",
+            ROLE_MANAGER, "负责人");
+
     // ---------------- 训练日历时段 ----------------
     /** 训练日历固定时段起点（整点，每次一小时） */
     public static final List<String> TIME_SLOTS = List.of(
@@ -223,6 +295,75 @@ public final class EquestrianDict {
 
     public static String recordStatusName(String status) {
         return status == null ? "" : RECORD_STATUS.getOrDefault(status, status);
+    }
+
+    // ---------------- 健康事件取值方法 ----------------
+
+    public static boolean isValidSeverity(String severity) {
+        return severity != null && HEALTH_SEVERITY.containsKey(severity);
+    }
+
+    public static String severityName(String severity) {
+        return severity == null ? "" : HEALTH_SEVERITY.getOrDefault(severity, severity);
+    }
+
+    public static boolean isHighRisk(String severity) {
+        return SEVERITY_HIGH.equals(severity);
+    }
+
+    public static boolean isValidHealthEventStatus(String status) {
+        return status != null && HEALTH_EVENT_STATUS.containsKey(status);
+    }
+
+    public static String healthEventStatusName(String status) {
+        return status == null ? "" : HEALTH_EVENT_STATUS.getOrDefault(status, status);
+    }
+
+    public static boolean isHealthEventOpen(String status) {
+        return status != null && EVENT_OPEN_STATUSES.contains(status);
+    }
+
+    public static boolean isValidHealthAction(String action) {
+        return action != null && HEALTH_ACTION.containsKey(action);
+    }
+
+    public static String healthActionName(String action) {
+        return action == null ? "" : HEALTH_ACTION.getOrDefault(action, action);
+    }
+
+    /** 某动作是否允许从 fromStatus 发起（登记动作没有来源状态约束） */
+    public static boolean canHealthAction(String action, String fromStatus) {
+        if (ACTION_REGISTER.equals(action) || ACTION_CLOSE.equals(action)) {
+            return true;
+        }
+        return HEALTH_ACTION_FROM.getOrDefault(action, List.of()).contains(fromStatus);
+    }
+
+    /** 动作执行后的事件状态；CLOSE 由放行流程直接给目标态，不在此表 */
+    public static String healthActionTarget(String action, String current) {
+        return switch (action) {
+            case ACTION_REGISTER -> EVENT_PENDING;
+            case ACTION_PROCESS -> current;
+            case ACTION_START_OBSERVE -> EVENT_OBSERVING;
+            case ACTION_REQUEST_REVIEW -> EVENT_REVIEW_PENDING;
+            case ACTION_REVIEW_CONTINUE -> EVENT_OBSERVING;
+            // 合格复查不关闭事件：休养马的事件维持「待复查」，等负责人放行时统一关闭
+            case ACTION_REVIEW_PASS -> EVENT_REVIEW_PENDING;
+            default -> current;
+        };
+    }
+
+    public static boolean isValidOperatorRole(String role) {
+        return role != null && OPERATOR_ROLE.containsKey(role);
+    }
+
+    public static String operatorRoleName(String role) {
+        return role == null ? "" : OPERATOR_ROLE.getOrDefault(role, role);
+    }
+
+    /** 只有负责人能确认复训放行；普通工作人员的权限止于登记、补充处置与复查 */
+    public static boolean canClearHealth(String role) {
+        return ROLE_MANAGER.equals(role);
     }
 
     public static boolean isValidTimeSlot(String startTime) {

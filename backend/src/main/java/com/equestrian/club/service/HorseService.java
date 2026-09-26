@@ -1,7 +1,9 @@
 package com.equestrian.club.service;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
@@ -9,14 +11,18 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.equestrian.club.common.BizException;
 import com.equestrian.club.dict.EquestrianDict;
+import com.equestrian.club.domain.Coach;
+import com.equestrian.club.domain.CoachRepository;
+import com.equestrian.club.domain.HealthEvent;
+import com.equestrian.club.domain.HealthEventRepository;
+import com.equestrian.club.domain.HealthTransition;
+import com.equestrian.club.domain.HealthTransitionRepository;
 import com.equestrian.club.domain.Horse;
 import com.equestrian.club.domain.HorseRepository;
 import com.equestrian.club.domain.Lesson;
 import com.equestrian.club.domain.LessonRepository;
 import com.equestrian.club.domain.LessonSession;
 import com.equestrian.club.domain.LessonSessionRepository;
-import com.equestrian.club.domain.Coach;
-import com.equestrian.club.domain.CoachRepository;
 import com.equestrian.club.domain.Member;
 import com.equestrian.club.domain.MemberRepository;
 import com.equestrian.club.domain.RidingRecord;
@@ -39,19 +45,25 @@ public class HorseService {
     private final CoachRepository coachRepository;
     private final MemberRepository memberRepository;
     private final RidingRecordRepository recordRepository;
+    private final HealthEventRepository healthEventRepository;
+    private final HealthTransitionRepository healthTransitionRepository;
 
     public HorseService(HorseRepository horseRepository,
             LessonSessionRepository sessionRepository,
             LessonRepository lessonRepository,
             CoachRepository coachRepository,
             MemberRepository memberRepository,
-            RidingRecordRepository recordRepository) {
+            RidingRecordRepository recordRepository,
+            HealthEventRepository healthEventRepository,
+            HealthTransitionRepository healthTransitionRepository) {
         this.horseRepository = horseRepository;
         this.sessionRepository = sessionRepository;
         this.lessonRepository = lessonRepository;
         this.coachRepository = coachRepository;
         this.memberRepository = memberRepository;
         this.recordRepository = recordRepository;
+        this.healthEventRepository = healthEventRepository;
+        this.healthTransitionRepository = healthTransitionRepository;
     }
 
     // ---------------- 查询 ----------------
@@ -210,6 +222,15 @@ public class HorseService {
             throw new BizException("马匹状态不能从「" + EquestrianDict.horseStatusName(current)
                     + "」直接流转为「" + EquestrianDict.horseStatusName(target) + "」");
         }
+        // 健康闭环不可绕过：休养 -> 在役只能走「负责人复训放行」，
+        // 只要还有未关闭的健康事件（含合格待放行），这里一律拒绝
+        if (EquestrianDict.HORSE_RESTING.equals(current) && EquestrianDict.HORSE_ACTIVE.equals(target)) {
+            List<HealthEvent> openEvents = healthEventRepository.findOpenByHorseId(id);
+            if (!openEvents.isEmpty()) {
+                throw new BizException("马匹「" + horse.getName() + "」仍有 " + openEvents.size()
+                        + " 条未关闭的健康事件，不能直接恢复在役，请在健康处置台完成复查并由负责人复训放行");
+            }
+        }
         horse.setStatus(target);
         return toView(horseRepository.save(horse));
     }
@@ -266,6 +287,7 @@ public class HorseService {
                     session.getBookedCount(),
                     session.getStatus(),
                     EquestrianDict.sessionStatusName(session.getStatus()),
+                    Boolean.TRUE.equals(session.getHealthAffected()),
                     records));
         }
 
@@ -293,6 +315,29 @@ public class HorseService {
 
     private HorseView toView(Horse horse) {
         Integer age = horse.getBirthYear() == null ? null : LocalDate.now().getYear() - horse.getBirthYear();
+
+        // 健康事件闭环汇总：未闭环数 / 逾期数 / 最近复查日 / 最近一次合格复查结论
+        List<HealthEvent> openEvents = healthEventRepository.findOpenByHorseId(horse.getId());
+        LocalDate today = LocalDate.now();
+        long openCount = openEvents.size();
+        long overdueCount = openEvents.stream()
+                .filter((e) -> e.getNextReviewDate() != null && e.getNextReviewDate().isBefore(today))
+                .count();
+        LocalDate nearestReviewDate = openEvents.stream()
+                .map(HealthEvent::getNextReviewDate)
+                .filter((date) -> date != null)
+                .min(Comparator.naturalOrder())
+                .orElse(null);
+        String latestPassConclusion = null;
+        LocalDateTime latestPassAt = null;
+        HealthTransition latestPass = healthTransitionRepository
+                .findFirstByHorseIdAndActionOrderByIdDesc(horse.getId(), EquestrianDict.ACTION_REVIEW_PASS)
+                .orElse(null);
+        if (latestPass != null) {
+            latestPassConclusion = latestPass.getNote();
+            latestPassAt = latestPass.getCreatedAt();
+        }
+
         return new HorseView(
                 horse.getId(),
                 horse.getHorseNo(),
@@ -310,6 +355,11 @@ public class HorseService {
                 horse.getWeightKg(),
                 horse.getHealthNote(),
                 horse.getCreatedAt(),
-                horse.getUpdatedAt());
+                horse.getUpdatedAt(),
+                openCount,
+                overdueCount,
+                nearestReviewDate,
+                latestPassConclusion,
+                latestPassAt);
     }
 }
