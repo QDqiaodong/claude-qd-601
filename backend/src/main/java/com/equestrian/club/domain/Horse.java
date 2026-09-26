@@ -64,6 +64,13 @@ public class Horse {
     @Column(name = "ride_level", nullable = false, length = 16)
     private String rideLevel;
 
+    /**
+     * 健康事件链版本（手工维护的乐观锁，不用 JPA @Version 以免影响既有 PUT 局部更新）。
+     * 每登记 / 流转 / 补充 / 复查 / 放行一次 +1，前端提交时回传所见版本，落后即 409。
+     */
+    @Column(name = "health_version", nullable = false)
+    private Long healthVersion = 0L;
+
     // ---------------- 以下字段落在副表 horse_health ----------------
 
     @Column(table = "horse_health", name = "last_check_date")
@@ -160,6 +167,14 @@ public class Horse {
 
     public void setRideLevel(String rideLevel) {
         this.rideLevel = rideLevel;
+    }
+
+    public Long getHealthVersion() {
+        return healthVersion;
+    }
+
+    public void setHealthVersion(Long healthVersion) {
+        this.healthVersion = healthVersion;
     }
 
     public LocalDate getLastCheckDate() {

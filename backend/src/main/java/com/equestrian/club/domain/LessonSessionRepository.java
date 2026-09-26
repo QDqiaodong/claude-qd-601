@@ -20,5 +20,12 @@ public interface LessonSessionRepository extends JpaRepository<LessonSession, Lo
     List<LessonSession> findBySessionDateBetweenOrderBySessionDateAscStartTimeAsc(
             LocalDate from, LocalDate to);
 
+    /**
+     * 某匹马从某天起（含当天）的未取消排期：登记高风险健康事件时，
+     * 这些场次要逐场标为受影响并挂到事件上（只标记，绝不删除）。
+     */
+    List<LessonSession> findByHorseIdAndSessionDateGreaterThanEqualAndStatusNotOrderBySessionDateAscStartTimeAsc(
+            Long horseId, LocalDate from, String excludedStatus);
+
     long countByLessonId(Long lessonId);
 }

@@ -31,6 +31,7 @@ public record HorseCalendarView(
             Integer bookedCount,
             String status,
             String statusName,
+            boolean healthAffected,
             List<CellRecord> records) {
     }
 

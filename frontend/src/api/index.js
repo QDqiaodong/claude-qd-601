@@ -24,16 +24,32 @@ function messageOf(error) {
 }
 
 async function call(promise) {
+  let res
   try {
-    const res = await promise
-    const body = res.data
-    if (body && body.ok === false) {
-      throw new Error(body.message || '操作失败')
-    }
-    return body ? body.data : null
+    res = await promise
   } catch (error) {
+    // 409 并发冲突：打上 conflict 标记，页面据此引导用户重新载入最新事件链
+    if (error.response && error.response.status === 409) {
+      const err = new Error(messageOf(error))
+      err.conflict = true
+      throw err
+    }
     throw new Error(messageOf(error))
   }
+  const body = res.data
+  if (body && body.ok === false) {
+    throw new Error(body.message || '操作失败')
+  }
+  return body ? body.data : null
+}
+
+/**
+ * 为一次「点击」生成幂等键：同一次操作的重复点击 / 网络重试共用一个 requestId，
+ * 后端据此保证不会产生两条记录、不会重复联动马匹状态。
+ */
+export function requestId(prefix = 'req') {
+  const rand = Math.random().toString(36).slice(2, 10)
+  return `${prefix}-${Date.now().toString(36)}-${rand}`
 }
 
 export const api = {
@@ -68,7 +84,18 @@ export const api = {
   sessionRecords: (id) => call(http.get(`/riding-records/by-session/${id}`)),
   book: (body) => call(http.post('/riding-records', body)),
   cancelRecord: (id) => call(http.post(`/riding-records/${id}/cancel`)),
-  completeRecord: (id) => call(http.post(`/riding-records/${id}/complete`))
+  completeRecord: (id) => call(http.post(`/riding-records/${id}/complete`)),
+
+  // 模块五：马匹健康事件闭环
+  healthEvents: (params = {}) =>
+    call(http.get('/health-events', { params })),
+  healthEvent: (id) => call(http.get(`/health-events/${id}`)),
+  horseHealth: (horseId) => call(http.get(`/health-events/horse/${horseId}/overview`)),
+  createHealthEvent: (body) => call(http.post('/health-events', body)),
+  supplementEvent: (id, body) => call(http.post(`/health-events/${id}/supplement`, body)),
+  transitionEvent: (id, body) => call(http.post(`/health-events/${id}/transition`, body)),
+  reviewEvent: (id, body) => call(http.post(`/health-events/${id}/reviews`, body)),
+  releaseHorse: (horseId, body) => call(http.post(`/health-events/horse/${horseId}/release`, body))
 }
 
 export default api

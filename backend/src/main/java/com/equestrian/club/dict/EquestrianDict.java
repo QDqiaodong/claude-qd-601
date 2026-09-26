@@ -112,6 +112,80 @@ public final class EquestrianDict {
             RECORD_COMPLETED, "已完成",
             RECORD_CANCELED, "已取消");
 
+    // ---------------- 健康事件状态机 ----------------
+    /** 待处理 */
+    public static final String EVENT_PENDING = "PENDING";
+    /** 观察中 */
+    public static final String EVENT_OBSERVING = "OBSERVING";
+    /** 待复查 */
+    public static final String EVENT_REVIEW_PENDING = "REVIEW_PENDING";
+    /** 已关闭（终态，只能由负责人复训放行时系统关闭） */
+    public static final String EVENT_CLOSED = "CLOSED";
+
+    private static final Map<String, String> EVENT_STATUS = Map.of(
+            EVENT_PENDING, "待处理",
+            EVENT_OBSERVING, "观察中",
+            EVENT_REVIEW_PENDING, "待复查",
+            EVENT_CLOSED, "已关闭");
+
+    /**
+     * 事件状态机许可边（人工流转部分）。
+     * 已关闭是终态；待复查可退回观察中（复查结论为继续观察）；
+     * 待复查 -> 已关闭只能走「负责人复训放行」，不开放给普通流转接口。
+     */
+    private static final Map<String, List<String>> EVENT_STATUS_EDGE = Map.of(
+            EVENT_PENDING, List.of(EVENT_OBSERVING, EVENT_REVIEW_PENDING),
+            EVENT_OBSERVING, List.of(EVENT_REVIEW_PENDING),
+            EVENT_REVIEW_PENDING, List.of(EVENT_OBSERVING),
+            EVENT_CLOSED, List.of());
+
+    // ---------------- 健康事件严重程度 ----------------
+    public static final String SEVERITY_HIGH = "HIGH";
+    public static final String SEVERITY_MEDIUM = "MEDIUM";
+    public static final String SEVERITY_LOW = "LOW";
+
+    private static final Map<String, String> SEVERITY = Map.of(
+            SEVERITY_HIGH, "高风险",
+            SEVERITY_MEDIUM, "中风险",
+            SEVERITY_LOW, "低风险");
+
+    // ---------------- 健康事件日志动作 ----------------
+    public static final String ACTION_REGISTER = "REGISTER";
+    public static final String ACTION_SUPPLEMENT = "SUPPLEMENT";
+    public static final String ACTION_TRANSITION = "TRANSITION";
+    public static final String ACTION_REVIEW = "REVIEW";
+    public static final String ACTION_RELEASE = "RELEASE";
+
+    private static final Map<String, String> ACTION_NAME = Map.of(
+            ACTION_REGISTER, "登记",
+            ACTION_SUPPLEMENT, "补充处置",
+            ACTION_TRANSITION, "状态流转",
+            ACTION_REVIEW, "复查",
+            ACTION_RELEASE, "复训放行");
+
+    // ---------------- 复查结论 ----------------
+    /** 继续观察（回到观察中，需给下次复查日） */
+    public static final String REVIEW_OBSERVE = "OBSERVE";
+    /** 调整下次复查日（留在待复查） */
+    public static final String REVIEW_RESCHEDULE = "RESCHEDULE";
+    /** 复查合格，申请复训放行（留在待复查，等负责人确认） */
+    public static final String REVIEW_PASS = "PASS";
+
+    private static final Map<String, String> REVIEW_RESULT = Map.of(
+            REVIEW_OBSERVE, "继续观察",
+            REVIEW_RESCHEDULE, "调整下次复查日",
+            REVIEW_PASS, "复查合格·申请放行");
+
+    // ---------------- 操作人员角色 ----------------
+    /** 普通工作人员：可登记、补充、流转、提交复查 */
+    public static final String ROLE_STAFF = "STAFF";
+    /** 负责人：唯一能确认复训放行的角色 */
+    public static final String ROLE_MANAGER = "MANAGER";
+
+    private static final Map<String, String> ROLE_NAME = Map.of(
+            ROLE_STAFF, "工作人员",
+            ROLE_MANAGER, "负责人");
+
     // ---------------- 训练日历时段 ----------------
     /** 训练日历固定时段起点（整点，每次一小时） */
     public static final List<String> TIME_SLOTS = List.of(
@@ -124,6 +198,61 @@ public final class EquestrianDict {
     public static final int CALENDAR_MAX_DAYS = 14;
 
     // ---------------- 取值方法 ----------------
+
+    public static boolean isValidEventStatus(String status) {
+        return status != null && EVENT_STATUS.containsKey(status);
+    }
+
+    public static String eventStatusName(String status) {
+        return status == null ? "" : EVENT_STATUS.getOrDefault(status, status);
+    }
+
+    public static List<String> eventStatusTargets(String status) {
+        return EVENT_STATUS_EDGE.getOrDefault(status, List.of());
+    }
+
+    public static boolean canTransferEventStatus(String from, String to) {
+        return eventStatusTargets(from).contains(to);
+    }
+
+    /** 未关闭事件（需要继续追踪 / 参与复训放行判定的事件） */
+    public static boolean isOpenEvent(String status) {
+        return EVENT_PENDING.equals(status) || EVENT_OBSERVING.equals(status)
+                || EVENT_REVIEW_PENDING.equals(status);
+    }
+
+    public static boolean isValidSeverity(String severity) {
+        return severity != null && SEVERITY.containsKey(severity);
+    }
+
+    public static String severityName(String severity) {
+        return severity == null ? "" : SEVERITY.getOrDefault(severity, severity);
+    }
+
+    /** 只有高风险事件才立即强制休养并冻结排课 */
+    public static boolean isHighSeverity(String severity) {
+        return SEVERITY_HIGH.equals(severity);
+    }
+
+    public static String actionName(String action) {
+        return action == null ? "" : ACTION_NAME.getOrDefault(action, action);
+    }
+
+    public static boolean isValidReviewResult(String result) {
+        return result != null && REVIEW_RESULT.containsKey(result);
+    }
+
+    public static String reviewResultName(String result) {
+        return result == null ? "" : REVIEW_RESULT.getOrDefault(result, result);
+    }
+
+    public static boolean isValidRole(String role) {
+        return role != null && ROLE_NAME.containsKey(role);
+    }
+
+    public static String roleName(String role) {
+        return role == null ? "" : ROLE_NAME.getOrDefault(role, role);
+    }
 
     public static boolean isValidHorseStatus(String status) {
         return status != null && HORSE_STATUS.containsKey(status);

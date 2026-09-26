@@ -22,5 +22,6 @@ public record SessionView(
         Integer bookedCount,
         Integer remain,
         String status,
-        String statusName) {
+        String statusName,
+        boolean healthAffected) {
 }

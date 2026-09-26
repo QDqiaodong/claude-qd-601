@@ -10,6 +10,7 @@
 --   课程容量封顶 / 同一教练同一时段不重叠 / 教练休假不能排期
 --   未通过初级考核不能约进阶课 / 会员卡次数与余额不足不能约 / 
 --   骑乘记录必须关联已排期课程 / 同一会员同一天同一时段不能重复约
+--   健康事件闭环：高风险立即休养并冻结排课 / 事件链四态流转 / 复查合格且无更新事件方可复训放行
 -- ============================================================================
 
 CREATE DATABASE IF NOT EXISTS equestrian_club
@@ -20,6 +21,10 @@ SET NAMES utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS riding_record;
+DROP TABLE IF EXISTS health_event_session;
+DROP TABLE IF EXISTS health_review;
+DROP TABLE IF EXISTS health_event_log;
+DROP TABLE IF EXISTS health_event;
 DROP TABLE IF EXISTS lesson_session;
 DROP TABLE IF EXISTS lesson;
 DROP TABLE IF EXISTS coach;
@@ -41,6 +46,9 @@ CREATE TABLE horse (
     birth_year  INT                   COMMENT '出生年份',
     status      VARCHAR(16)  NOT NULL COMMENT '在役状态机：ACTIVE 在役 / RESTING 休养 / RETIRED 退役',
     ride_level  VARCHAR(16)  NOT NULL COMMENT 'BEGINNER_SAFE / INTERMEDIATE / ADVANCED',
+    -- 健康事件链版本号：该马每发生一次登记 / 流转 / 补充 / 复查 / 放行就 +1，
+    -- 页面提交时回传自己看到的版本，版本对不上说明期间被别人动过，直接并发冲突
+    health_version BIGINT   NOT NULL DEFAULT 0 COMMENT '健康事件链版本（乐观锁）',
     created_at  DATETIME              COMMENT '创建时间',
     updated_at  DATETIME              COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -128,6 +136,9 @@ CREATE TABLE lesson_session (
     capacity     INT         NOT NULL COMMENT '本场容量',
     booked_count INT         NOT NULL COMMENT '已约人数',
     status       VARCHAR(16) NOT NULL COMMENT 'SCHEDULED 已排期 / FULL 已满员 / CANCELED 已取消',
+    -- 健康事件标记：马匹被高风险事件打入休养时，当时排着的未来场次只标记、不删除，
+    -- 标记后该场不能再被新预约（马匹非在役），但取消排期等原有流程不受影响
+    health_affected TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否被健康事件标记为受影响',
     created_at   DATETIME             COMMENT '创建时间',
     updated_at   DATETIME             COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -181,6 +192,111 @@ CREATE TABLE riding_record (
     CONSTRAINT fk_record_session FOREIGN KEY (session_id) REFERENCES lesson_session (id),
     CONSTRAINT fk_record_horse FOREIGN KEY (horse_id) REFERENCES horse (id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '骑乘记录';
+
+-- ---------------------------------------------------------------------------
+-- 健康事件：从「发生」到「观察复查」再到「复训放行」的完整闭环主表
+-- 状态机：PENDING 待处理 -> OBSERVING 观察中 -> REVIEW_PENDING 待复查 -> CLOSED 已关闭
+-- CLOSED 只能由负责人复训放行时系统关闭，工作人员不能手工关单（不能绕过放行）。
+-- ---------------------------------------------------------------------------
+CREATE TABLE health_event (
+    id                BIGINT       NOT NULL AUTO_INCREMENT,
+    event_no          VARCHAR(32)  NOT NULL COMMENT '事件编号，唯一，形如 HE-000007',
+    horse_id          BIGINT       NOT NULL COMMENT '事件马匹',
+    occurred_at       DATETIME     NOT NULL COMMENT '发生时间',
+    severity          VARCHAR(16)  NOT NULL COMMENT 'HIGH 高风险 / MEDIUM 中风险 / LOW 低风险',
+    symptom           VARCHAR(500) NOT NULL COMMENT '症状说明',
+    treatment_advice  VARCHAR(500) NOT NULL COMMENT '处置建议',
+    expected_review_date DATE               COMMENT '预计复查日',
+    status            VARCHAR(20)  NOT NULL COMMENT 'PENDING / OBSERVING / REVIEW_PENDING / CLOSED',
+    -- 该事件登记落定后马匹事件链所处版本：用来判断复查结论是否晚于最新伤病事件，
+    -- 不依赖时间戳精度（同秒内连登两起事件也能正确判定「结论是否基于旧事件」）
+    registered_version BIGINT     NOT NULL DEFAULT 0 COMMENT '事件登记时的事件链版本',
+    -- 最近一次复查结论的冗余指针：马匹详情「最近一次复查结论」直接读这里
+    latest_review_id  BIGINT               COMMENT '最近一次复查记录 id',
+    created_by        VARCHAR(64)  NOT NULL COMMENT '登记人',
+    created_role      VARCHAR(16)  NOT NULL COMMENT 'STAFF 普通工作人员 / MANAGER 负责人',
+    closed_at         DATETIME             COMMENT '关闭时间（放行成功时写入）',
+    closed_by         VARCHAR(64)           COMMENT '关闭人（放行负责人）',
+    created_at        DATETIME     NOT NULL COMMENT '创建时间',
+    updated_at        DATETIME     NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_health_event_no (event_no),
+    KEY idx_event_horse_status (horse_id, status),
+    KEY idx_event_review (latest_review_id),
+    CONSTRAINT fk_event_horse FOREIGN KEY (horse_id) REFERENCES horse (id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '马匹健康事件';
+
+-- ---------------------------------------------------------------------------
+-- 健康事件流转日志：只追加、永不修改、永不删除。
+-- 每次登记 / 补充 / 流转 / 复查 / 放行落一条，处置历史不能被后续编辑覆盖。
+-- request_id 是前端为一次点击生成的幂等键：重复点击拿到同一条记录，绝不产生两条。
+-- ---------------------------------------------------------------------------
+CREATE TABLE health_event_log (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    event_id    BIGINT       NOT NULL COMMENT '所属事件',
+    horse_id    BIGINT       NOT NULL COMMENT '所属马匹（冗余，便于按马追溯）',
+    action      VARCHAR(24)  NOT NULL COMMENT 'REGISTER 登记 / SUPPLEMENT 补充 / TRANSITION 流转 / REVIEW 复查 / RELEASE 复训放行',
+    from_status VARCHAR(20)           COMMENT '流转前状态（首次登记为空）',
+    to_status   VARCHAR(20)           COMMENT '流转后状态',
+    note        VARCHAR(500) NOT NULL COMMENT '本次处置说明',
+    operator    VARCHAR(64)  NOT NULL COMMENT '操作人',
+    role        VARCHAR(16)  NOT NULL COMMENT 'STAFF / MANAGER',
+    request_id  VARCHAR(64)           COMMENT '前端幂等键（同一操作重复提交共用一条日志）',
+    created_at  DATETIME     NOT NULL COMMENT '操作时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_event_log_request (request_id),
+    KEY idx_event_log_event (event_id, id),
+    KEY idx_event_log_horse (horse_id, id),
+    CONSTRAINT fk_event_log_event FOREIGN KEY (event_id) REFERENCES health_event (id),
+    CONSTRAINT fk_event_log_horse FOREIGN KEY (horse_id) REFERENCES horse (id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '健康事件处置历史（只追加）';
+
+-- ---------------------------------------------------------------------------
+-- 复查记录：一次复查一条；放行依据就是每个未关闭事件的「最后一条」复查
+-- result：OBSERVE 继续观察 / RESCHEDULE 调整下次复查日 / PASS 复查合格申请放行
+-- next_review_date：OBSERVE / RESCHEDULE 必填；PASS 不填表示长期有效，
+-- 填了则是合格结论的有效期，过期后不能凭这条结论放行（复查已过期）。
+-- ---------------------------------------------------------------------------
+CREATE TABLE health_review (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    event_id         BIGINT       NOT NULL COMMENT '所属事件',
+    horse_id         BIGINT       NOT NULL COMMENT '所属马匹',
+    review_date      DATE         NOT NULL COMMENT '复查日期',
+    result           VARCHAR(16)  NOT NULL COMMENT 'OBSERVE / RESCHEDULE / PASS',
+    conclusion       VARCHAR(500) NOT NULL COMMENT '复查结论 / 说明',
+    next_review_date DATE                  COMMENT '下次复查日（PASS 时可空=长期有效）',
+    -- 复查依据版本：写入时马匹事件链版本。放行时最新事件的 registered_version
+    -- 大于它，说明结论基于旧事件链（期间又登记了更新的伤病），必须拒绝。
+    based_version     BIGINT      NOT NULL DEFAULT 0 COMMENT '复查所依据的事件链版本',
+    reviewer         VARCHAR(64)  NOT NULL COMMENT '复查人',
+    role             VARCHAR(16)  NOT NULL COMMENT 'STAFF / MANAGER',
+    request_id       VARCHAR(64)           COMMENT '前端幂等键',
+    created_at       DATETIME     NOT NULL COMMENT '创建时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_review_request (request_id),
+    KEY idx_review_event (event_id, id),
+    CONSTRAINT fk_review_event FOREIGN KEY (event_id) REFERENCES health_event (id),
+    CONSTRAINT fk_review_horse FOREIGN KEY (horse_id) REFERENCES horse (id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '健康事件复查记录';
+
+-- ---------------------------------------------------------------------------
+-- 健康事件与受影响排期的关联：登记高风险事件时把该马未来未取消场次逐场挂进来，
+-- 场次本身不删除，这里保留「是哪次事件、在什么时间影响了哪一场」的追溯链。
+-- ---------------------------------------------------------------------------
+CREATE TABLE health_event_session (
+    id           BIGINT      NOT NULL AUTO_INCREMENT,
+    event_id     BIGINT      NOT NULL COMMENT '来源健康事件',
+    horse_id     BIGINT      NOT NULL COMMENT '马匹',
+    session_id   BIGINT      NOT NULL COMMENT '受影响排期',
+    marked_at    DATETIME    NOT NULL COMMENT '标记时间',
+    marked_by    VARCHAR(64) NOT NULL COMMENT '标记操作人（事件登记人）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_event_session (event_id, session_id),
+    KEY idx_hes_horse (horse_id),
+    CONSTRAINT fk_hes_event FOREIGN KEY (event_id) REFERENCES health_event (id),
+    CONSTRAINT fk_hes_horse FOREIGN KEY (horse_id) REFERENCES horse (id),
+    CONSTRAINT fk_hes_session FOREIGN KEY (session_id) REFERENCES lesson_session (id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '健康事件影响的未来排期（可追溯，不删排期）';
 
 -- ===========================================================================
 -- 种子数据
@@ -276,3 +392,52 @@ INSERT INTO riding_record (id, member_id, session_id, horse_id, record_date, sta
 (16, 1, 8,  1, DATE_ADD(CURDATE(), INTERVAL 4 DAY), '10:00', '11:00', 'BOOKED',    784.00, 2, '私教',           NOW(), NOW()),
 (17, 2, 11, 2, DATE_SUB(CURDATE(), INTERVAL 5 DAY), '09:00', '10:00', 'COMPLETED', 361.00, 1, NULL,             NOW(), NOW()),
 (18, 3, 11, 2, DATE_SUB(CURDATE(), INTERVAL 5 DAY), '09:00', '10:00', 'COMPLETED', 304.00, 1, NULL,             NOW(), NOW());
+
+-- ===========================================================================
+-- 健康事件种子数据
+-- 设计口径：让「待复查且已逾期 + 最近复查结论为继续观察」一进来就能在处置台看到，
+-- 并且玉兔（H-005）休养中、其未来排期被标记受影响，可直接追溯到 HE-000001。
+-- ===========================================================================
+
+-- H-005 玉兔：右前肢轻度跛行，事件当前停在「待复查」，预计复查日已过 1 天（触发逾期筛选）
+INSERT INTO health_event
+(id, event_no, horse_id, occurred_at, severity, symptom, treatment_advice, expected_review_date,
+ status, registered_version, latest_review_id, created_by, created_role, closed_at, closed_by, created_at, updated_at) VALUES
+(1, 'HE-000001', 5, DATE_SUB(NOW(), INTERVAL 5 DAY), 'MEDIUM',
+ '右前肢轻度跛行，快步时点头明显，蹄温略高',
+ '停止跳跃与快步训练，冰敷右前肢每日两次，外敷消炎膏，3-5 天后复查跛行分级',
+ DATE_SUB(CURDATE(), INTERVAL 1 DAY),
+ 'REVIEW_PENDING', 1, 1, '值班员小周', 'STAFF', NULL, NULL,
+ DATE_SUB(NOW(), INTERVAL 5 DAY), DATE_SUB(NOW(), INTERVAL 2 DAY));
+
+-- 处置历史（只追加）：登记 -> 转观察中 -> 第一次复查继续观察（同时把下次复查日调到昨天）
+INSERT INTO health_event_log
+(id, event_id, horse_id, action, from_status, to_status, note, operator, role, request_id, created_at) VALUES
+(1, 1, 5, 'REGISTER',   NULL,           'PENDING',        '晨间遛马发现跛行，立即停训并报值班兽医',                 '值班员小周', 'STAFF', 'seed-he-1-register',   DATE_SUB(NOW(), INTERVAL 5 DAY)),
+(2, 1, 5, 'TRANSITION', 'PENDING',      'OBSERVING',      '已冰敷处理，生命体征平稳，转入观察',                     '值班员小周', 'STAFF', 'seed-he-1-observe',    DATE_SUB(NOW(), INTERVAL 5 DAY)),
+(3, 1, 5, 'REVIEW',     'OBSERVING',    'REVIEW_PENDING', '跛行由 2/5 级降至 1/5 级，继续观察，下次复查日定在次日', '兽医老李',   'STAFF', 'seed-he-1-review-1',   DATE_SUB(NOW(), INTERVAL 2 DAY));
+
+-- 最近一次复查结论：继续观察（马匹详情页直接展示这条）
+INSERT INTO health_review
+(id, event_id, horse_id, review_date, result, conclusion, next_review_date, based_version, reviewer, role, request_id, created_at) VALUES
+(1, 1, 5, DATE_SUB(CURDATE(), INTERVAL 2 DAY), 'OBSERVE',
+ '跛行减轻但未完全消除，仍不可复训，继续观察并按原方案冰敷',
+ DATE_SUB(CURDATE(), INTERVAL 1 DAY),
+ 3, '兽医老李', 'STAFF', 'seed-he-1-review', DATE_SUB(NOW(), INTERVAL 2 DAY));
+
+-- H-005 事件登记时它名下的未来场次：不删除、标为受影响，并挂到事件上可追溯
+UPDATE lesson_session
+SET health_affected = 1
+WHERE horse_id = 5
+  AND status <> 'CANCELED'
+  AND session_date >= CURDATE();
+
+INSERT INTO health_event_session (event_id, horse_id, session_id, marked_at, marked_by)
+SELECT 1, 5, id, DATE_SUB(NOW(), INTERVAL 5 DAY), '值班员小周'
+FROM lesson_session
+WHERE horse_id = 5
+  AND status <> 'CANCELED'
+  AND session_date >= CURDATE();
+
+-- 事件链上一共动过 3 次（登记 / 流转 / 复查），马匹健康版本与之一致
+UPDATE horse SET health_version = 3 WHERE id = 5;

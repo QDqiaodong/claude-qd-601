@@ -2,6 +2,7 @@ import { reactive, shallowRef, markRaw } from 'vue'
 
 import HorseWall from '../views/HorseWall.vue'
 import StallBoard from '../views/StallBoard.vue'
+import HealthDesk from '../views/HealthDesk.vue'
 import LessonSchedule from '../views/LessonSchedule.vue'
 import CoachBoard from '../views/CoachBoard.vue'
 import MemberDesk from '../views/MemberDesk.vue'
@@ -19,7 +20,8 @@ export const menuGroups = [
     key: 'g-horse',
     label: '马匹与马房',
     items: [
-      { path: '/horses', label: '马匹卡片墙', title: '马匹卡片墙 · 训练日历', hint: '点马匹卡片，右侧出这匹马的训练日历；点日历格子直接排课或预约' },
+      { path: '/horses', label: '马匹卡片墙', title: '马匹卡片墙 · 训练日历', hint: '点马匹卡片，右侧出这匹马的健康事件链与训练日历；值班时先看未闭环事件和最近复查结论' },
+      { path: '/health', label: '健康事件处置台', title: '马匹健康事件处置台', hint: '登记伤病、观察复查、复训放行全闭环；高风险立即休养并冻结未来排课' },
       { path: '/stalls', label: '栏位看板', title: '马房栏位看板', hint: '按马房分区看栏位占用，入栏 / 出栏 / 转维护都在卡片上完成' }
     ]
   },
@@ -54,6 +56,7 @@ export const currentView = shallowRef(markRaw(HorseWall))
 
 const viewByPath = {
   '/horses': markRaw(HorseWall),
+  '/health': markRaw(HealthDesk),
   '/stalls': markRaw(StallBoard),
   '/lessons': markRaw(LessonSchedule),
   '/coaches': markRaw(CoachBoard),

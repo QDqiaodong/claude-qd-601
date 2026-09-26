@@ -71,6 +71,7 @@
               :key="horse.id"
               :label="horse.horseNo + ' ' + horse.name + '（' + horse.statusName + '）'"
               :value="horse.id"
+              :disabled="horse.status !== 'ACTIVE'"
             />
           </el-select>
         </el-form-item>

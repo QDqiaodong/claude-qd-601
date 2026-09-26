@@ -23,6 +23,14 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 并发冲突：409 + 具体的变化提示。前端必须让用户重新载入最新事件链，不能重试旧提交。
+     */
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConflict(ConflictException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(e.getMessage()));
+    }
+
+    /**
      * 参数注解校验失败：400 + 字段名与提示
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)

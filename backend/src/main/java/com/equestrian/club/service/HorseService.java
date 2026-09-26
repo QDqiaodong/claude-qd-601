@@ -11,6 +11,8 @@ import com.equestrian.club.common.BizException;
 import com.equestrian.club.dict.EquestrianDict;
 import com.equestrian.club.domain.Horse;
 import com.equestrian.club.domain.HorseRepository;
+import com.equestrian.club.domain.HealthEvent;
+import com.equestrian.club.domain.HealthEventRepository;
 import com.equestrian.club.domain.Lesson;
 import com.equestrian.club.domain.LessonRepository;
 import com.equestrian.club.domain.LessonSession;
@@ -34,6 +36,7 @@ import com.equestrian.club.dto.view.HorseView;
 public class HorseService {
 
     private final HorseRepository horseRepository;
+    private final HealthEventRepository healthEventRepository;
     private final LessonSessionRepository sessionRepository;
     private final LessonRepository lessonRepository;
     private final CoachRepository coachRepository;
@@ -41,12 +44,14 @@ public class HorseService {
     private final RidingRecordRepository recordRepository;
 
     public HorseService(HorseRepository horseRepository,
+            HealthEventRepository healthEventRepository,
             LessonSessionRepository sessionRepository,
             LessonRepository lessonRepository,
             CoachRepository coachRepository,
             MemberRepository memberRepository,
             RidingRecordRepository recordRepository) {
         this.horseRepository = horseRepository;
+        this.healthEventRepository = healthEventRepository;
         this.sessionRepository = sessionRepository;
         this.lessonRepository = lessonRepository;
         this.coachRepository = coachRepository;
@@ -162,10 +167,9 @@ public class HorseService {
             horse.setRideLevel(request.getRideLevel());
         }
         if (request.getStatus() != null) {
-            if (!EquestrianDict.isValidHorseStatus(request.getStatus())) {
-                throw new BizException("在役状态取值不合法：" + request.getStatus());
-            }
-            horse.setStatus(request.getStatus());
+            // 在役状态只能由两条受控通道驱动：马匹状态机接口 / 健康事件复训放行。
+            // 不允许通过编辑档案直接改，避免绕过状态机与「未闭环事件不能恢复在役」校验。
+            throw new BizException("在役状态由状态流转 / 健康事件复训放行驱动，不能通过编辑档案直接修改");
         }
         // 副表 horse_health 的字段
         if (request.getLastCheckDate() != null) {
@@ -209,6 +213,13 @@ public class HorseService {
             }
             throw new BizException("马匹状态不能从「" + EquestrianDict.horseStatusName(current)
                     + "」直接流转为「" + EquestrianDict.horseStatusName(target) + "」");
+        }
+        // 休养 -> 在役只能走健康事件的「复训放行」闭环：只要还有未关闭事件，手工恢复一律拒绝，
+        // 避免有人用马匹档案的状态流转把休养 / 复查规则整个绕过。
+        if (EquestrianDict.HORSE_RESTING.equals(current) && EquestrianDict.HORSE_ACTIVE.equals(target)
+                && healthEventRepository.existsByHorseIdAndStatusNot(id, EquestrianDict.EVENT_CLOSED)) {
+            throw new BizException("马匹「" + horse.getName()
+                    + "」仍有未关闭的健康事件，不能直接恢复在役，请在健康事件处置台完成复查并由负责人复训放行");
         }
         horse.setStatus(target);
         return toView(horseRepository.save(horse));
@@ -266,6 +277,7 @@ public class HorseService {
                     session.getBookedCount(),
                     session.getStatus(),
                     EquestrianDict.sessionStatusName(session.getStatus()),
+                    Boolean.TRUE.equals(session.getHealthAffected()),
                     records));
         }
 
@@ -309,6 +321,7 @@ public class HorseService {
                 horse.getVaccineCount(),
                 horse.getWeightKg(),
                 horse.getHealthNote(),
+                horse.getHealthVersion(),
                 horse.getCreatedAt(),
                 horse.getUpdatedAt());
     }

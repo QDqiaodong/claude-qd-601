@@ -60,7 +60,7 @@
             v-for="session in group.items"
             :key="session.id"
             class="session"
-            :class="{ 'session--canceled': session.status === 'CANCELED' }"
+            :class="{ 'session--canceled': session.status === 'CANCELED', 'session--affected': session.healthAffected }"
           >
             <div class="session__time">
               <b>{{ session.startTime }}</b>
@@ -71,6 +71,9 @@
                 {{ session.lessonName }}
                 <el-tag size="small" effect="plain">{{ session.categoryName }}</el-tag>
                 <el-tag size="small" :type="tagOf(session.status)">{{ session.statusName }}</el-tag>
+                <el-tag v-if="session.healthAffected" type="danger" size="small" effect="dark">
+                  健康事件受影响
+                </el-tag>
               </div>
               <div class="session__meta">
                 教练 {{ session.coachName }}
@@ -131,8 +134,10 @@
               :key="horse.id"
               :label="horse.horseNo + ' ' + horse.name + '（' + horse.statusName + '）'"
               :value="horse.id"
+              :disabled="horse.status !== 'ACTIVE'"
             />
           </el-select>
+          <p class="eq-muted" style="margin: 4px 0 0">休养 / 退役马不能排课（有未闭环健康事件的马处于休养），后端同样强制拦截。</p>
         </el-form-item>
         <el-form-item label="日期">
           <el-date-picker v-model="form.sessionDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
@@ -427,6 +432,11 @@ watch(
 .session--canceled {
   opacity: 0.6;
   background: #f7f7f7;
+}
+
+.session--affected {
+  border-color: #e08a6f;
+  background: #fdf3ef;
 }
 
 .session__time {

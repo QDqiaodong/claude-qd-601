@@ -53,8 +53,23 @@
             <span>上次体检 {{ horse.lastCheckDate || '—' }}</span>
             <span>体重 {{ horse.weightKg === null ? '—' : horse.weightKg }} kg</span>
           </div>
+          <div v-if="horse.healthSummary" class="card__risk">
+            <el-tag v-if="horse.healthSummary.openCount" type="danger" size="small" effect="dark">
+              {{ horse.healthSummary.openCount }} 起未闭环
+            </el-tag>
+            <el-tag v-if="horse.healthSummary.overdueCount" type="danger" size="small" effect="plain">
+              {{ horse.healthSummary.overdueCount }} 起逾期
+            </el-tag>
+            <el-tag v-if="!horse.healthSummary.openCount && horse.status === 'RESTING'" type="warning" size="small">
+              休养中
+            </el-tag>
+            <el-tag v-if="horse.healthSummary.releasable" type="success" size="small" effect="dark">
+              可复训放行
+            </el-tag>
+          </div>
           <div class="card__ops" @click.stop>
             <el-button size="small" text type="primary" @click="openHorseDialog(horse)">改档案</el-button>
+            <el-button size="small" text type="primary" @click="gotoHealth(horse)">健康事件</el-button>
             <el-button size="small" text type="primary" @click="openStatusDialog(horse)">流转状态</el-button>
           </div>
         </div>
@@ -74,7 +89,84 @@
       <div v-if="calendar" class="cal-legend">
         <el-tag size="small" effect="plain">{{ calendar.statusName }}</el-tag>
         <el-tag size="small" effect="plain">{{ calendar.rideLevelName }}</el-tag>
+        <el-button size="small" text type="primary" @click="goHealthDesk">前往健康事件处置台 →</el-button>
         <span class="eq-muted">点空格子=排课，点有课的格子=看名单并约课</span>
+      </div>
+
+      <!-- 健康风险一屏看清：未闭环事件 + 最近复查结论 + 复训放行 -->
+      <div v-if="health" class="health">
+        <div class="health__head">
+          <h3 class="health__title">健康事件总览</h3>
+          <el-radio-group v-model="identity.role" size="small">
+            <el-radio-button label="STAFF">工作人员</el-radio-button>
+            <el-radio-button label="MANAGER">负责人</el-radio-button>
+          </el-radio-group>
+          <el-input v-model="identity.name" size="small" placeholder="操作人姓名" style="width: 120px" />
+          <el-button size="small" @click="loadHealth">刷新</el-button>
+        </div>
+
+        <el-alert
+          v-if="health.horseStatus === 'RESTING'"
+          type="warning"
+          :closable="false"
+          :title="`该马正在休养：不能安排新的骑乘课程${health.openCount ? '，仍有 ' + health.openCount + ' 起未闭环健康事件' : ''}`"
+          style="margin-bottom: 8px"
+        />
+
+        <div v-if="health.openEvents.length" class="health__events">
+          <div
+            v-for="event in health.openEvents"
+            :key="event.id"
+            class="he-row"
+            @click="goHealthDesk(event.id)"
+          >
+            <el-tag :type="eventSeverityTag(event.severity)" size="small" effect="dark">
+              {{ event.severityName }}
+            </el-tag>
+            <el-tag :type="eventStatusTag(event.status)" size="small">{{ event.statusName }}</el-tag>
+            <el-tag v-if="event.overdue" type="danger" size="small" effect="dark">已逾期</el-tag>
+            <span class="he-row__no">{{ event.eventNo }}</span>
+            <span class="he-row__symptom">{{ event.symptom }}</span>
+            <span class="eq-muted">复查日 {{ event.expectedReviewDate || '—' }}</span>
+          </div>
+        </div>
+        <div v-else class="eq-muted" style="margin-bottom: 8px">没有未闭环的健康事件。</div>
+
+        <div class="health__review">
+          <b>最近一次复查结论：</b>
+          <template v-if="health.latestReview">
+            <el-tag :type="health.latestReview.result === 'PASS' ? 'success' : 'warning'" size="small">
+              {{ health.latestReview.resultName }}
+            </el-tag>
+            {{ health.latestReview.reviewDate }} · {{ health.latestReview.conclusion }}
+            <el-tag v-if="health.latestReview.expired" type="danger" size="small" effect="dark">结论已过期</el-tag>
+            <span class="eq-muted">复查人 {{ health.latestReview.reviewer }}</span>
+          </template>
+          <span v-else class="eq-muted">暂无复查记录</span>
+        </div>
+
+        <!-- 放行区：按钮显隐只是体验，角色与全部业务条件都在后端强校验 -->
+        <div class="health__release">
+          <template v-if="identity.role === 'MANAGER'">
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!health.releasable"
+              :loading="saving"
+              @click="openRelease"
+            >
+              负责人复训放行
+            </el-button>
+          </template>
+          <el-tag v-else type="info" size="small" effect="plain">复训放行仅负责人可确认</el-tag>
+          <span
+            v-for="(blocker, idx) in health.releaseBlockers"
+            :key="idx"
+            class="health__blocker"
+          >
+            ⚠ {{ blocker }}
+          </span>
+        </div>
       </div>
 
       <div v-if="calendar" class="cal">
@@ -94,6 +186,7 @@
             @click="onCellClick(date, slot)"
           >
             <template v-if="cellOf(date, slot)">
+              <div v-if="cellOf(date, slot).healthAffected" class="cal__affected">⚠ 健康事件受影响</div>
               <div class="cal__lesson">{{ cellOf(date, slot).lessonName }}</div>
               <div class="cal__line">{{ cellOf(date, slot).coachName }} 教练</div>
               <div class="cal__line">
@@ -280,18 +373,47 @@
       <el-button type="primary" :loading="saving" style="width: 100%" @click="submitBook">确认预约</el-button>
     </template>
   </el-drawer>
+
+  <!-- 负责人复训放行确认 -->
+  <el-dialog v-model="releaseDialog" title="复训放行确认（负责人）" width="480px">
+    <el-alert
+      type="warning"
+      show-icon
+      :closable="false"
+      title="放行将关闭该马全部未闭环事件并恢复在役；后端会再次校验角色与全部放行条件，条件不满足会明确拒绝。"
+      style="margin-bottom: 10px"
+    />
+    <el-form label-width="84px">
+      <el-form-item label="负责人">
+        <el-input v-model="identity.name" placeholder="负责人姓名" style="width: 220px" />
+      </el-form-item>
+      <el-form-item label="放行说明">
+        <el-input v-model="releaseNote" type="textarea" :rows="2" maxlength="500" show-word-limit />
+      </el-form-item>
+    </el-form>
+    <div v-if="health && health.releaseBlockers.length" class="release-blockers">
+      <div v-for="(blocker, idx) in health.releaseBlockers" :key="idx">⚠ {{ blocker }}</div>
+    </div>
+    <template #footer>
+      <el-button @click="releaseDialog = false">取消</el-button>
+      <el-button type="primary" :loading="saving" @click="submitRelease">确认放行，恢复在役</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import api from '../api'
+import api, { requestId } from '../api'
+import { identity, withIdentity } from '../identity'
+import { navigate } from '../router'
 
 const horses = ref([])
 const lessons = ref([])
 const coaches = ref([])
 const members = ref([])
 const calendar = ref(null)
+const health = ref(null)
 
 const keyword = ref('')
 const statusFilter = ref('')
@@ -303,6 +425,8 @@ const statusDialog = ref(false)
 const sessionDialog = ref(false)
 const cellDrawer = ref(false)
 const activeCell = ref(null)
+const releaseDialog = ref(false)
+const releaseNote = ref('')
 
 const horseForm = reactive(emptyHorse())
 const statusForm = reactive({ id: null, name: '', currentName: '', target: '' })
@@ -381,6 +505,9 @@ function cellClass(date, slot) {
   if (cell.status === 'CANCELED') {
     return 'cal__cell--canceled'
   }
+  if (cell.healthAffected) {
+    return 'cal__cell--affected'
+  }
   if (cell.bookedCount >= cell.capacity) {
     return 'cal__cell--full'
   }
@@ -399,6 +526,7 @@ async function loadBase() {
     lessons.value = lessonList || []
     coaches.value = coachList || []
     members.value = memberList || []
+    await loadHealthSummaries()
     if (horses.value.length && selectedHorseId.value === null) {
       await selectHorse(horses.value[0])
     }
@@ -418,9 +546,104 @@ async function loadCalendar() {
   }
 }
 
+async function loadHealth() {
+  if (selectedHorseId.value === null) {
+    return
+  }
+  try {
+    health.value = await api.horseHealth(selectedHorseId.value)
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
+}
+
+/** 卡片墙上直接标出每匹马的未闭环 / 逾期 / 可放行风险，值班不用逐匹点进去猜 */
+async function loadHealthSummaries() {
+  await Promise.all(
+    horses.value.map(async (horse) => {
+      try {
+        horse.healthSummary = await api.horseHealth(horse.id)
+      } catch (error) {
+        horse.healthSummary = null
+      }
+    })
+  )
+}
+
+function gotoHealth(event) {
+  navigate('/health')
+}
+
+function goHealthDesk(eventId) {
+  try {
+    sessionStorage.setItem('eq-health-focus', eventId ? String(eventId) : '')
+  } catch (error) {
+    // 忽略
+  }
+  navigate('/health')
+}
+
+function eventSeverityTag(severity) {
+  if (severity === 'HIGH') return 'danger'
+  if (severity === 'MEDIUM') return 'warning'
+  return 'info'
+}
+
+function eventStatusTag(status) {
+  if (status === 'PENDING') return 'danger'
+  if (status === 'OBSERVING') return 'warning'
+  if (status === 'REVIEW_PENDING') return 'primary'
+  return 'info'
+}
+
+function openRelease() {
+  if (!identity.name) {
+    ElMessage.warning('请先填写负责人姓名')
+    return
+  }
+  if (health.value && health.value.releaseBlockers.length) {
+    ElMessage.error('当前不满足放行条件：' + health.value.releaseBlockers.join('；'))
+    return
+  }
+  releaseNote.value = ''
+  releaseDialog.value = true
+}
+
+async function submitRelease() {
+  if (!identity.name) {
+    ElMessage.warning('请先填写负责人姓名')
+    return
+  }
+  saving.value = true
+  try {
+    await api.releaseHorse(
+      selectedHorseId.value,
+      withIdentity({
+        requestId: requestId('release'),
+        expectedVersion: health.value.healthVersion,
+        note: releaseNote.value || null
+      })
+    )
+    ElMessage.success('复训放行已确认：全部未闭环事件关闭，马匹恢复在役')
+    releaseDialog.value = false
+    await loadBase()
+    await loadCalendar()
+    await loadHealth()
+  } catch (error) {
+    if (error.conflict) {
+      ElMessage.error(error.message)
+      await Promise.all([loadHealth(), loadBase()])
+    } else {
+      ElMessage.error(error.message)
+    }
+  } finally {
+    saving.value = false
+  }
+}
+
 async function selectHorse(horse) {
   selectedHorseId.value = horse.id
-  await loadCalendar()
+  await Promise.all([loadCalendar(), loadHealth()])
 }
 
 function openHorseDialog(horse) {
@@ -503,6 +726,13 @@ async function submitStatus() {
 }
 
 function onCellClick(date, slot) {
+  // 休养 / 退役马不能再排新课（后端也强校验，这里提前挡住并解释原因）
+  if (calendar.value && calendar.value.status !== 'ACTIVE') {
+    ElMessage.warning(
+      `马匹「${calendar.value.horseName}」当前为「${calendar.value.statusName}」状态，不能安排新课程；请先在健康事件处置台闭环并由负责人复训放行`
+    )
+    return
+  }
   const cell = cellOf(date, slot)
   if (cell) {
     activeCell.value = cell
@@ -657,6 +887,109 @@ watch(
   color: #9a8b85;
 }
 
+.card__risk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.cal__affected {
+  font-size: 10px;
+  font-weight: 700;
+  color: #d9480f;
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-bottom: 2px;
+}
+
+.health {
+  margin: 12px 0 4px;
+  border: 1px solid #e4d5ce;
+  border-radius: 10px;
+  padding: 12px;
+  background: #fffdfc;
+}
+
+.health__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.health__title {
+  margin: 0;
+  font-size: 14px;
+  color: #4a3129;
+  flex: 1;
+}
+
+.health__events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.he-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid #ece3df;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.he-row:hover {
+  border-color: #cbb4a9;
+}
+
+.he-row__no {
+  color: #a08d86;
+  font-size: 11px;
+}
+
+.he-row__symptom {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #4a3129;
+}
+
+.health__review {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.9;
+  color: #4a3129;
+  border-top: 1px dashed #efe6e1;
+  padding-top: 8px;
+}
+
+.health__release {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.health__blocker {
+  font-size: 12px;
+  color: #c0392b;
+}
+
+.release-blockers {
+  color: #c0392b;
+  font-size: 12px;
+  line-height: 1.9;
+  margin-top: 6px;
+}
+
 .card__ops {
   display: flex;
   justify-content: flex-end;
@@ -738,6 +1071,12 @@ watch(
   border-style: solid;
   border-color: #573d34;
   color: #fff;
+}
+
+.cal__cell--affected {
+  background: #fde8e2;
+  border-style: solid;
+  border-color: #e08a6f;
 }
 
 .cal__cell--canceled {

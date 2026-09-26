@@ -55,6 +55,13 @@ public class LessonSession {
     @Column(name = "status", nullable = false, length = 16)
     private String status;
 
+    /**
+     * 是否被健康事件标记为受影响：高风险事件把马打入休养时，其当时的未来未取消场次
+     * 逐场置 1 并挂到 health_event_session 上。只标记不删除，追溯链保留。
+     */
+    @Column(name = "health_affected", nullable = false)
+    private Boolean healthAffected = false;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -151,6 +158,14 @@ public class LessonSession {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public Boolean getHealthAffected() {
+        return healthAffected;
+    }
+
+    public void setHealthAffected(Boolean healthAffected) {
+        this.healthAffected = healthAffected;
     }
 
     public LocalDateTime getCreatedAt() {

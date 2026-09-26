@@ -155,6 +155,7 @@ public class SessionService {
         // 默认值放在 service，实体上不写默认值
         session.setBookedCount(0);
         session.setStatus(EquestrianDict.SESSION_SCHEDULED);
+        session.setHealthAffected(false);
 
         return toView(sessionRepository.save(session));
     }
@@ -243,6 +244,7 @@ public class SessionService {
                 booked,
                 Math.max(capacity - booked, 0),
                 session.getStatus(),
-                EquestrianDict.sessionStatusName(session.getStatus()));
+                EquestrianDict.sessionStatusName(session.getStatus()),
+                Boolean.TRUE.equals(session.getHealthAffected()));
     }
 }
